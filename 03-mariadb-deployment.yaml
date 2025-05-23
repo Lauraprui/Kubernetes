@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mi-app-web-mariadb-deployment
+  labels:
+    app: mi-app-web
+    tier: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mi-app-web
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: mi-app-web
+        tier: database
+    spec:
+      securityContext:
+        fsGroup: 999
+        fsGroupChangePolicy: "OnRootMismatch"
+      containers:
+        - name: mariadb
+          image: mariadb:10.11
+          ports:
+            - containerPort: 3306
+              name: mysql
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: root
+            - name: MYSQL_DATABASE
+              value: torneos
+            - name: MYSQL_USER
+              value: root
+            - name: MYSQL_PASSWORD
+              value: ""
+          volumeMounts:
+            - name: mariadb-persistent-storage
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mariadb-persistent-storage
+          persistentVolumeClaim:
+            claimName: mi-app-web-mariadb-pvc

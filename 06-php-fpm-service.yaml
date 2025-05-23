@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mi-app-web-php-fpm-service
+  labels:
+    app: mi-app-web
+    tier: backend
+spec:
+  ports:
+    - port: 9000
+      targetPort: php-fpm
+  selector:
+    app: mi-app-web
+    tier: backend
+  type: ClusterIP

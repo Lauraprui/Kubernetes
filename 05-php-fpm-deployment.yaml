@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mi-app-web-php-fpm-deployment
+  labels:
+    app: mi-app-web
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mi-app-web
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: mi-app-web
+        tier: backend
+    spec:
+      initContainers:
+        - name: sync-s3-content
+          image: amazon/aws-cli:latest
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-s3-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aws-s3-credentials
+                  key: AWS_SESSION_TOKEN
+
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+              
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              aws s3 sync s3://recuperacionwebserver/pagina/ /var/www/html/ --delete;
+              echo "Sincronizacion desde S3 completada.";
+          volumeMounts:
+            - name: app-code
+              mountPath: /var/www/html
+      containers:
+        - name: php-fpm
+          image: php:8.2-fpm-alpine
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              apk update && \
+              apk add --no-cache $PHPIZE_DEPS mariadb-connector-c-dev && \
+              docker-php-ext-install mysqli && \
+              echo "mysqli instalado, iniciando php-fpm..." && \
+              php-fpm
+          env:
+            - name: DB_HOST
+              value: "mi-app-web-mariadb-service"
+            - name: DB_DATABASE
+              value: "torneos"
+            - name: DB_USERNAME
+              value: "root"
+            - name: DB_PASSWORD
+              value: ""
+          ports:
+            - containerPort: 9000
+              name: php-fpm
+          volumeMounts:
+            - name: app-code
+              mountPath: /var/www/html
+      volumes:
+        - name: app-code
+          persistentVolumeClaim:
+            claimName: mi-app-web-codigo-pvc
