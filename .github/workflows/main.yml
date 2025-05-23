@@ -33,4 +33,6 @@ jobs:
           kubectl apply -f .
 
       - name: Obteniendo todo de kubernetes
-        run: kubectl get all
+        run: |
+          sleep 8
+          kubectl get all
