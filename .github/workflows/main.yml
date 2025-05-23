@@ -1,38 +1,93 @@
-name: Cluster EKS
+name: Deploy to EKS Cluster (ciclo)
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
-      - name: Update kubeconfig
+      - name: Update kubeconfig for EKS cluster
         run: aws eks update-kubeconfig --name ciclo --region us-east-1
 
-      - name: Driver de EFS
+      - name: Install EFS CSI Driver
         run: |
+          echo "Applying EFS CSI Driver..."
           kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=release-1.5"
+          echo "Waiting for EFS CSI Driver components to settle..."
+          sleep 45
 
-      - name: Aplicar Storage
+      - name: Create/Update Kubernetes Secret for AWS S3 Credentials
         run: |
-          kubectl apply -f .
+          echo "Creating/Updating aws-s3-credentials Secret..."
+          kubectl delete secret aws-s3-credentials --ignore-not-found
+          kubectl create secret generic aws-s3-credentials \
+            --from-literal=AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}' \
+            --from-literal=AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}' \
+            --from-literal=AWS_SESSION_TOKEN='${{ secrets.AWS_SESSION_TOKEN }}'
+          sleep 5
 
-      - name: Obteniendo todo de kubernetes
+      - name: Apply Kubernetes Manifests
         run: |
-          sleep 20
+          kubectl apply -f 00-storageclass.yaml
+          sleep 5
+
+          kubectl apply -f 01-pvc-codigo.yaml
+          sleep 5
+          
+          kubectl apply -f 02-pvc-mariadb.yaml
+          echo "Waiting for PVCs to bind..."
+          # Puedes añadir una verificación más robusta para el estado Bound de los PVCs aquí
+          sleep 20 
+
+          kubectl apply -f 03-mariadb-deployment.yaml
+          echo "Waiting for MariaDB deployment to roll out..."
+          kubectl rollout status deployment/mi-app-web-mariadb-deployment --timeout=3m || \
+            (echo "MariaDB deployment failed. Describing pods:" && kubectl describe pods -l app=mi-app-web,tier=database && echo "Fetching MariaDB logs:" && kubectl logs -l app=mi-app-web,tier=database --all-containers --tail=100 && exit 1)
+          
+          kubectl apply -f 04-mariadb-service.yaml
+          sleep 5
+
+          kubectl apply -f 05-php-fpm-deployment.yaml
+          echo "Waiting for PHP-FPM deployment to roll out..."
+          kubectl rollout status deployment/mi-app-web-php-fpm-deployment --timeout=3m || \
+            (echo "PHP-FPM deployment failed. Describing pods:" && kubectl describe pods -l app=mi-app-web,tier=backend && echo "Fetching PHP-FPM logs:" && kubectl logs -l app=mi-app-web,tier=backend --all-containers --tail=100 && exit 1)
+
+          kubectl apply -f 06-php-fpm-service.yaml
+          sleep 5
+
+          kubectl apply -f 07-nginx-configmap.yaml
+          sleep 5
+
+          kubectl apply -f 08-nginx-deployment.yaml
+          echo "Waiting for Nginx deployment to roll out..."
+          kubectl rollout status deployment/mi-app-web-nginx-deployment --timeout=3m || \
+            (echo "Nginx deployment failed. Describing pods:" && kubectl describe pods -l app=mi-app-web,tier=frontend && echo "Fetching Nginx logs:" && kubectl logs -l app=mi-app-web,tier=frontend --all-containers --tail=100 && exit 1)
+
+          kubectl apply -f 09-nginx-service.yaml
+          sleep 5
+
+      - name: Get all Kubernetes resources in default namespace
+        run: |
+          echo "Final state of resources:"
           kubectl get all
+        
+      - name: Describe pods on failure
+        if: failure()
+        run: |
+          kubectl describe pods
