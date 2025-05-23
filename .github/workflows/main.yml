@@ -34,5 +34,5 @@ jobs:
 
       - name: Obteniendo todo de kubernetes
         run: |
-          sleep 8
+          sleep 20
           kubectl get all
